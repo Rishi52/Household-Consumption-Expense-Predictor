@@ -1,0 +1,653 @@
+    // Handles state/sector/year selection, dropdowns, table rendering, and D3 map rendering
+
+    // --- State variables ---
+    let allStates = [];
+    let selectedStates = [];
+
+    // --- Year config (automated) ---
+    const YEAR_CONFIG = {
+      '2223': { label: '2022-23', file: '/static/data/year_2022_23.csv' },
+      '2324': { label: '2023-24', file: '/static/data/year_2023_24.csv' },
+      // To add a new year, add a line like:
+      // '2526': { label: '2025-26', file: '/static/data/year_2025_26.csv' }
+    };
+
+    // --- Year/Sector selection helpers ---
+    function getSelectedYears() {
+      return Array.from(document.querySelectorAll('input[name="year"]:checked')).map(cb => cb.value);
+    }
+    function getYearCSVFiles() {
+      const years = getSelectedYears();
+      return years
+        .map(y => YEAR_CONFIG[y] ? { year: y, file: YEAR_CONFIG[y].file } : null)
+        .filter(Boolean);
+    }
+    function getSelectedSectors() {
+      const checked = Array.from(document.querySelectorAll('#sectorCapsule input[type="checkbox"]:checked'));
+      return checked.map(cb => cb.value.toLowerCase());
+    }
+    function getSelectedYearLabel(year) {
+      return YEAR_CONFIG[year] ? YEAR_CONFIG[year].label : '';
+    }
+
+    // --- State dropdown logic ---
+    function populateStateDropdown(states) {
+      const dropdownOptions = document.getElementById('dropdownOptions');
+      if (!dropdownOptions) return;
+      dropdownOptions.innerHTML = '';
+      if (states.length > 0) {
+        const allStatesOption = document.createElement('div');
+        allStatesOption.className = 'dropdown-option';
+        allStatesOption.textContent = 'All States';
+        allStatesOption.onclick = function(e) {
+          e.stopPropagation();
+          selectedStates = ['All States'];
+          updateSelectedStates();
+          closeDropdown();
+        };
+        if (!selectedStates.includes('All States')) dropdownOptions.appendChild(allStatesOption);
+        // Only show states that are not already selected and not "India"
+        states.forEach(state => {
+          if (
+            !selectedStates.includes(state) &&
+            !selectedStates.includes('All States') &&
+            state.toLowerCase() !== 'india'
+          ) {
+            const option = document.createElement('div');
+            option.className = 'dropdown-option';
+            option.textContent = state;
+            option.onclick = function(e) {
+              e.stopPropagation();
+              selectedStates = selectedStates.filter(s => s !== 'All States' && s !== 'India');
+              if (!selectedStates.includes(state)) {
+                selectedStates.push(state);
+                updateSelectedStates();
+              }
+              closeDropdown();
+            };
+            dropdownOptions.appendChild(option);
+          }
+        });
+        document.getElementById('dropdownPlaceholder').textContent = 'Choose states...';
+      } else {
+        document.getElementById('dropdownPlaceholder').textContent = 'Select year(s)';
+      } 
+      // Show/hide India MPCE button
+      showHideIndiaButton();
+    }
+    // Show or hide the India MPCE button based on selection
+    function showHideIndiaButton() {
+      const btn = document.getElementById('indiaMpceBtn');
+      if (!btn) return;
+      // Hide if any state is selected from dropdown (not India)
+      if (selectedStates.length === 0) {
+        btn.style.display = 'inline-block';
+      } else {
+        btn.style.display = 'none';
+      }
+    }
+    // Update selected states UI and dropdown
+    function updateSelectedStates() {
+      const selectedStatesDiv = document.getElementById('selectedStates');
+      selectedStatesDiv.innerHTML = '';
+      selectedStates.forEach(state => {
+        const box = document.createElement('div');
+        box.className = 'state-box';
+        box.textContent = state;
+        const cross = document.createElement('span');
+        cross.className = 'remove-cross';
+        cross.textContent = '×';
+        cross.onclick = function(e) {
+          e.stopPropagation();
+          selectedStates = selectedStates.filter(s => s !== state);
+          updateSelectedStates();
+          // Attach clear selection handler after DOM update
+          attachClearSelectionHandler();
+        };
+        box.appendChild(cross);
+        selectedStatesDiv.appendChild(box);
+      });
+      document.getElementById('dropdownPlaceholder').textContent = '';
+      document.getElementById('clearSelectionContainer').style.display = selectedStates.length ? 'block' : 'none';
+      // Do NOT call populateStateDropdown here to avoid recursion!
+      showHideIndiaButton();
+      // Attach clear selection handler after DOM update
+      attachClearSelectionHandler();
+    }
+    // India MPCE button click handler
+    function selectIndiaOnly() {
+      selectedStates = ['India'];
+      updateSelectedStates();
+      closeDropdown();
+      attachClearSelectionHandler();
+    }
+    window.selectIndiaOnly = selectIndiaOnly;
+    // Load states from CSV for the selected year(s)
+    function loadStatesFromCSV() {
+      const yearFiles = getYearCSVFiles();
+      const csvFile = yearFiles.length > 0 ? yearFiles[0].file : null;
+      if (!csvFile) {
+        allStates = [];
+        populateStateDropdown([]);
+        document.getElementById('dropdownPlaceholder').textContent = 'Select year first';
+        return;
+      }
+      d3.csv(csvFile).then(data => {
+        const stateList = [];
+        data.forEach(d => {
+          const state = d.StateName && d.StateName.trim();
+          if (state && !stateList.includes(state)) stateList.push(state);
+        });
+        allStates = stateList;
+        if (stateList.length > 0) {
+          populateStateDropdown(allStates);
+        } else {
+          populateStateDropdown([]);
+          document.getElementById('dropdownPlaceholder').textContent = 'Select year(s)';
+        }
+      }).catch(() => {
+        allStates = [];
+        populateStateDropdown([]);
+        document.getElementById('dropdownPlaceholder').textContent = 'Select year(s)';
+      });
+    }
+
+    // --- Table rendering ---
+    function renderSelectionTable(sectors, states) {
+      const containerId = 'selectionTableContainer';
+      let container = document.getElementById(containerId);
+      if (!sectors.length || !states.length) {
+        if (container) container.innerHTML = '';
+        return;
+      }
+      let useIndia = states.includes('India');
+      const displayStates = (states.includes('All States'))
+        ? allStates.filter(s => s.toLowerCase() !== 'india')
+        : (useIndia ? ['India'] : states);
+      if (!container) {
+        container = document.createElement('div');
+        container.id = containerId;
+        container.style.margin = '32px auto 18px auto';
+        container.style.maxWidth = '1000px';
+        container.style.background = '#f6fafd';
+        container.style.borderRadius = '16px';
+        container.style.boxShadow = '0 2px 12px rgba(74,144,226,0.07)';
+        container.style.padding = '18px 24px';
+        container.style.fontSize = '1.12rem';
+        container.style.fontWeight = '500';
+        container.style.letterSpacing = '0.5px';
+        container.style.textAlign = 'center';
+        const mapsContainer = document.getElementById('mapsContainer');
+        mapsContainer.parentNode.insertBefore(container, mapsContainer);
+      }
+      if (!displayStates.length) {
+        container.innerHTML = '';
+        return;
+      }
+
+      // Helper to get MPCE data for selected states/sectors/years
+      function getMPCEDataFor(states, sectors, callback) {
+        const yearFiles = getYearCSVFiles();
+        if (!yearFiles.length) {
+          callback([]);
+          return;
+        }
+        // Load all selected years' data
+        Promise.all(yearFiles.map(({ year, file }) =>
+          d3.csv(file).then(data => ({ year, data }))
+        )).then(yearDataArr => {
+          // Build a flat array of {state, sector, year, actual, predicted}
+          let rows = [];
+          yearDataArr.forEach(({ year, data }) => {
+            data.forEach(d => {
+              const state = d.StateName && d.StateName.trim();
+              const sector = d.SectorName && d.SectorName.trim().toLowerCase();
+              if (
+                state &&
+                ((useIndia && state.toLowerCase() === 'india') ||
+                  (!useIndia && states.includes(state)))
+                && sectors.includes(sector)
+              ) {
+                rows.push({
+                  state: useIndia ? 'India' : state,
+                  sector: sector.charAt(0).toUpperCase() + sector.slice(1),
+                  year: (year === '2223') ? '2022-23' : (year === '2324') ? '2023-24' : year,
+                  actual: d.ActualMPCE,
+                  predicted: d.PredictedMPCE
+                });
+              }
+            });
+          });
+          callback(rows);
+        }).catch(() => {
+          callback([]);
+        });
+      }
+
+      // Build HTML table for selection
+      let html = '<table style="margin:0 auto; border-collapse:collapse; font-size:1.08rem;">';
+      html += '<tr>';
+      html += '<th style="padding:8px 18px; border-bottom:1.5px solid #b5c8f7;">State</th>';
+      html += '<th style="padding:8px 18px; border-bottom:1.5px solid #b5c8f7;">Sector</th>';
+      html += '<th style="padding:8px 18px; border-bottom:1.5px solid #b5c8f7;">Year</th>';
+      html += '<th style="padding:8px 18px; border-bottom:1.5px solid #b5c8f7; text-align:center;">Actual MPCE (&#8377;)</th>';
+      html += '<th style="padding:8px 18px; border-bottom:1.5px solid #b5c8f7; text-align:center;">Predicted MPCE (&#8377;)</th>';
+      html += '<th style="padding:8px 18px; border-bottom:1.5px solid #b5c8f7; text-align:center;">Absolute Error (%)</th>';
+      html += '</tr>';
+
+      getMPCEDataFor(displayStates, sectors, function(rows) {
+        if (!rows.length) {
+          html += `<tr><td colspan="6" style="padding:12px; color:#d32f2f;">No data for selected states/sectors/years.</td></tr>`;
+        } else {
+          rows.forEach(row => {
+            let errorPercent = '-';
+            if (
+              row.actual !== undefined && row.predicted !== undefined &&
+              !isNaN(row.actual) && !isNaN(row.predicted) &&
+              Number(row.actual) !== 0
+            ) {
+              errorPercent = ((Math.abs(Number(row.predicted) - Number(row.actual)) / Number(row.actual)) * 100).toFixed(2) + '%';
+            }
+            html += '<tr>';
+            html += `<td style="padding:8px 18px; color:#0078d7;">${row.state}</td>`;
+            html += `<td style="padding:8px 18px; color:#0078d7;">${row.sector}</td>`;
+            html += `<td style="padding:8px 18px; color:#0078d7;">${row.year}</td>`;
+            html += `<td style="padding:8px 18px; text-align:center;">${row.actual && !isNaN(row.actual) ? '₹ ' + Number(row.actual).toFixed(2) : '-'}</td>`;
+            html += `<td style="padding:8px 18px; text-align:center;">${row.predicted && !isNaN(row.predicted) ? '₹ ' + Number(row.predicted).toFixed(2) : '-'}</td>`;
+            html += `<td style="padding:8px 18px; text-align:center;">${errorPercent}</td>`;
+            html += '</tr>';
+          });
+        }
+        html += '</table>';
+        container.innerHTML = html;
+      });
+    }
+
+    // --- Map rendering ---
+    function createDynamicMapContainers(selectedSectors) {
+      let mapsContainer = document.getElementById('mapsContainer');
+      if (!mapsContainer) {
+        mapsContainer = document.createElement('div');
+        mapsContainer.id = 'mapsContainer';
+        mapsContainer.className = 'main-container';
+        const formElem = document.getElementById('sectorForm');
+        formElem.parentNode.insertBefore(mapsContainer, formElem.nextSibling);
+      }
+      mapsContainer.innerHTML = '';
+
+      const yearFiles = getYearCSVFiles();
+      const mapTypes = [
+        { key: 'actual', label: 'Actual MPCE' },
+        { key: 'predicted', label: 'Predicted MPCE' }
+      ];
+
+      // For each sector, for each year, create a row of maps
+      selectedSectors.forEach(sector => {
+        yearFiles.forEach(({ year }) => {
+          const rowDiv = document.createElement('div');
+          rowDiv.className = 'map-row';
+          rowDiv.id = `row-${sector}-${year}`;
+
+          mapTypes.forEach(type => {
+            const containerDiv = document.createElement('div');
+            containerDiv.className = 'map-container';
+            containerDiv.id = `container-${type.key}-${sector}-${year}`;
+
+            const contentDiv = document.createElement('div');
+            contentDiv.className = 'map-content';
+
+            const titleDiv = document.createElement('div');
+            titleDiv.className = 'map-title';
+            titleDiv.textContent = `${type.label} (${sector.charAt(0).toUpperCase() + sector.slice(1)}) - ${getSelectedYearLabel(year)}`;
+
+            const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+            svg.id = `map-${type.key}-${sector}-${year}`;
+            svg.classList.add('map-svg');
+
+            const tooltipDiv = document.createElement('div');
+            tooltipDiv.id = `tooltip-${type.key}-${sector}-${year}`;
+            tooltipDiv.className = 'tooltip';
+
+            const legendDiv = document.createElement('div');
+            legendDiv.className = 'legend-container';
+            legendDiv.id = `legend-${type.key}-${sector}-${year}`;
+
+            contentDiv.appendChild(titleDiv);
+            contentDiv.appendChild(svg);
+            contentDiv.appendChild(tooltipDiv);
+            containerDiv.appendChild(contentDiv);
+            containerDiv.appendChild(legendDiv);
+            rowDiv.appendChild(containerDiv);
+          });
+
+          mapsContainer.appendChild(rowDiv);
+        });
+      });
+    }
+    function renderMPCEMaps(forceReload) {
+      const width = 540, height = 620;
+      const selectedSectors = getSelectedSectors();
+      const yearFiles = getYearCSVFiles();
+      const mapConfigs = [];
+
+      // Build mapConfigs for all year/sector/type combinations
+      selectedSectors.forEach(sector => {
+        yearFiles.forEach(({ year }) => {
+          mapConfigs.push(
+            {
+              svgId: `#map-actual-${sector}-${year}`,
+              tooltipId: `#tooltip-actual-${sector}-${year}`,
+              legendId: `#legend-actual-${sector}-${year}`,
+              valueKey: sector === 'rural' ? 'ActualMPCE_Rural' : 'ActualMPCE_Urban',
+              title: `Actual MPCE (${sector.charAt(0).toUpperCase() + sector.slice(1)}) - ${getSelectedYearLabel(year)}`,
+              year,
+            },
+            {
+              svgId: `#map-predicted-${sector}-${year}`,
+              tooltipId: `#tooltip-predicted-${sector}-${year}`,
+              legendId: `#legend-predicted-${sector}-${year}`,
+              valueKey: sector === 'rural' ? 'PredictedMPCE_Rural' : 'PredictedMPCE_Urban',
+              title: `Predicted MPCE (${sector.charAt(0).toUpperCase() + sector.slice(1)}) - ${getSelectedYearLabel(year)}`,
+              year,
+            }
+          );
+        });
+      });
+
+      const projection = d3.geoMercator()
+        .center([80, 23])
+        .scale(750)
+        .translate([width / 2, height / 2]);
+      const path = d3.geoPath().projection(projection);
+
+      function normalizeStateName(name) {
+        return name
+          .toLowerCase()
+          .replace(/[\s\.\&\(\)\-]/g, '');
+      }
+
+      function drawLegend(containerId, colorScale, minVal, maxVal) {
+        const legendHeight = 340, legendWidth = 22;
+        const legendSvg = d3.select(containerId)
+          .html("")
+          .append("svg")
+          .attr("width", 90)
+          .attr("height", legendHeight + 120);
+        const defs = legendSvg.append("defs");
+        const gradientId = containerId.replace("#", "") + "-gradient";
+        const gradient = defs.append("linearGradient")
+          .attr("id", gradientId)
+          .attr("x1", "0%").attr("y1", "100%")
+          .attr("x2", "0%").attr("y2", "0%");
+        gradient.append("stop")
+          .attr("offset", "0%")
+          .attr("stop-color", colorScale(minVal));
+        gradient.append("stop")
+          .attr("offset", "100%")
+          .attr("stop-color", colorScale(maxVal));
+        legendSvg.append("rect")
+          .attr("x", 34)
+          .attr("y", 60)
+          .attr("width", legendWidth)
+          .attr("height", legendHeight)
+          .style("fill", `url(#${gradientId})`)
+          .style("stroke", "#333")
+          .style("stroke-width", "1");
+        legendSvg.append("text")
+          .attr("x", 34 + legendWidth / 2)
+          .attr("y", 60 + legendHeight + 28)
+          .attr("text-anchor", "middle")
+          .attr("font-size", "18px")
+          .attr("fill", "#133366")
+          .attr("font-weight", "bold")
+          .text(minVal);
+        legendSvg.append("text")
+          .attr("x", 34 + legendWidth / 2)
+          .attr("y", 52)
+          .attr("text-anchor", "middle")
+          .attr("font-size", "18px")
+          .attr("fill", "#133366")
+          .attr("font-weight", "bold")
+          .text(maxVal);
+        legendSvg.append("text")
+          .attr("x", 34 + legendWidth / 2)
+          .attr("y", 28)
+          .attr("text-anchor", "middle")
+          .attr("font-size", "17px")
+          .attr("font-weight", "bold")
+          .attr("fill", "#133366")
+          .text("MPCE");
+      }
+
+      function loadAndRenderMaps() {
+        // For each year, load its CSV and render all maps for that year
+        const useIndia = selectedStates.includes('India');
+        yearFiles.forEach(({ year, file }) => {
+          const geojsonFile = useIndia ? '/static/data/india-composite.geojson' : '/static/data/india.json';
+          d3.json(geojsonFile).then(geojson => {
+            d3.csv(file).then(csvData => {
+              let dataByState = {};
+              csvData.forEach(d => {
+                const normState = normalizeStateName(d.StateName.trim());
+                if (!dataByState[normState]) {
+                  dataByState[normState] = { csvStateName: d.StateName.trim() };
+                }
+                if (d.SectorName.trim().toLowerCase() === "rural") {
+                  dataByState[normState].ActualMPCE_Rural = +d.ActualMPCE;
+                  dataByState[normState].PredictedMPCE_Rural = +d.PredictedMPCE;
+                } else if (d.SectorName.trim().toLowerCase() === "urban") {
+                  dataByState[normState].ActualMPCE_Urban = +d.ActualMPCE;
+                  dataByState[normState].PredictedMPCE_Urban = +d.PredictedMPCE;
+                }
+              });
+              const allValues = [];
+              Object.values(dataByState).forEach(d => {
+                ["ActualMPCE_Rural", "ActualMPCE_Urban", "PredictedMPCE_Rural", "PredictedMPCE_Urban"].forEach(key => {
+                  if (d[key] !== undefined && !isNaN(d[key])) allValues.push(d[key]);
+                });
+              });
+              const minVal = Math.floor(d3.min(allValues)/ 100) * 100;
+              const maxVal = Math.ceil(d3.max(allValues)  / 100) * 100;
+              const colorScale = d3.scaleLinear()
+                .domain([minVal, maxVal])
+                .range(["#fefded", "#ff0000"]);
+              const selected = useIndia
+                ? ['India']
+                : (selectedStates.includes('All States') || selectedStates.length === 0)
+                  ? Object.values(dataByState).map(d => d.csvStateName)
+                  : selectedStates;
+              function isStateSelected(stateName) {
+                if (useIndia) return stateName.trim().toLowerCase() === 'india';
+                const norm = normalizeStateName(stateName);
+                return selected.some(sel => normalizeStateName(sel) === norm);
+              }
+              // Render all mapConfigs for this year
+              mapConfigs.filter(cfg => cfg.year === year).forEach(cfg => {
+                drawLegend(cfg.legendId, colorScale, minVal, maxVal);
+                const svg = d3.select(cfg.svgId)
+                  .attr("width", width)
+                  .attr("height", height);
+                const tooltip = d3.select(cfg.tooltipId);
+                svg.selectAll("path")
+                  .data(geojson.features)
+                  .enter().append("path")
+                  .attr("class", function(d) {
+                    const geoState = (d.properties.st_nm || "Unknown");
+                    return isStateSelected(geoState) ? "state state-selected" : "state state-unselected";
+                  })
+                  .attr("d", path)
+                  .attr("fill", function(d) {
+                    const geoState = (d.properties.st_nm || "Unknown");
+                    const normGeoState = normalizeStateName(geoState);
+                    const stateData = dataByState[normGeoState];
+                    let value = stateData ? stateData[cfg.valueKey] : undefined;
+                    if (isStateSelected(geoState)) {
+                      return (value !== undefined && !isNaN(value)) ? colorScale(value) : "#eee";
+                    } else {
+                      return "#f2f2f2";
+                    }
+                  })
+                  .attr("opacity", function(d) {
+                    const geoState = (d.properties.st_nm || "Unknown");
+                    return isStateSelected(geoState) ? 1 : 0.35;
+                  })
+                  .on("mouseover", function(event, d) {
+                    const geoState = (d.properties.st_nm || "Unknown");
+                    const normGeoState = normalizeStateName(geoState);
+                    const stateData = dataByState[normGeoState];
+                    let value = stateData ? stateData[cfg.valueKey] : "N/A";
+                    let displayName = stateData ? stateData.csvStateName : geoState;
+                    let valueDisplay = (value !== undefined && !isNaN(value)) ? `₹ ${Number(value).toFixed(2)}` : value;
+                    tooltip
+                      .style("display", "block")
+                      .html(
+                        `<strong>${displayName}</strong><br/>` +
+                        `${cfg.title}: <b>${valueDisplay}</b>`
+                      );
+                  })
+                  .on("mousemove", function(event) {
+                    tooltip
+                      .style("left", (event.clientX + 20) + "px")
+                      .style("top", (event.clientY - 10) + "px");
+                  })
+                  .on("mouseout", function() {
+                    tooltip.style("display", "none");
+                  });
+              });
+            });
+          });
+        });
+      }
+
+      if (forceReload) {
+        loadAndRenderMaps();
+        return;
+      }
+      loadAndRenderMaps();
+    }
+
+    // --- Event handlers and UI logic ---
+    document.querySelectorAll('input[name="year"]').forEach(cb => {
+      cb.addEventListener('change', function() {
+        updateSelectedStates();
+        loadStatesFromCSV();
+        // After loading states, repopulate dropdown
+        setTimeout(() => {
+          populateStateDropdown(allStates);
+          attachClearSelectionHandler();
+        }, 0);
+        showHideIndiaButton();
+      });
+    });
+    loadStatesFromCSV();
+    setTimeout(() => {
+      populateStateDropdown(allStates);
+      attachClearSelectionHandler();
+    }, 0);
+
+    document.getElementById('sectorForm').onsubmit = function() {
+      const selectedYears = getSelectedYears();
+      const selectedSectors = getSelectedSectors();
+      const errorMsgId = 'selectionErrorMsg';
+      let errorMsg = '';
+      if (selectedYears.length === 0) {
+        errorMsg = 'Please select at least one year.';
+      } else if (!selectedSectors.length && !selectedStates.length) {
+        errorMsg = 'Please select at least one sector and one state.';
+      } else if (!selectedSectors.length) {
+        errorMsg = 'Please select at least one sector.';
+      } else if (!selectedStates.length) {
+        errorMsg = 'Please select at least one state.';
+      }
+      let errorElem = document.getElementById(errorMsgId);
+      if (!errorElem) {
+        errorElem = document.createElement('div');
+        errorElem.id = errorMsgId;
+        errorElem.style.color = '#d32f2f';
+        errorElem.style.fontWeight = '600';
+        errorElem.style.margin = '12px 0 0 0';
+        errorElem.style.fontSize = '1.08rem';
+        const form = document.getElementById('sectorForm');
+        form.insertBefore(errorElem, form.querySelector('.sector-submit-btn'));
+      }
+      errorElem.textContent = errorMsg;
+      if (errorMsg) return false;
+      errorElem.textContent = '';
+      // For table, just use the first selected year
+      renderSelectionTable(selectedSectors, selectedStates);
+      document.getElementById('mapsContainer').style.display = 'block';
+      createDynamicMapContainers(selectedSectors);
+      if (typeof renderMPCEMaps === "function") renderMPCEMaps(true);
+      setTimeout(() => {
+        const mapsElem = document.getElementById('mapsContainer');
+        if (mapsElem) mapsElem.scrollIntoView({ behavior: 'smooth' });
+      }, 50);
+      return false;
+    };
+
+    // --- Table toggle logic ---
+    function setTableVisibility(show) {
+      const tableContainer = document.getElementById('selectionTableContainer');
+      const toggleBtn = document.getElementById('toggleTableBtn');
+      if (!tableContainer || !toggleBtn) return;
+      if (show) {
+        tableContainer.style.display = '';
+        toggleBtn.textContent = 'Hide Table';
+        toggleBtn.classList.add('floating');
+      } else {
+        tableContainer.style.display = 'none';
+        toggleBtn.textContent = 'Show Table';
+        toggleBtn.classList.remove('floating');
+      }
+    }
+    document.addEventListener('DOMContentLoaded', function() {
+      const toggleBtn = document.getElementById('toggleTableBtn');
+      if (!toggleBtn) return;
+      let tableVisible = false;
+      toggleBtn.onclick = function() {
+        tableVisible = !tableVisible;
+        setTableVisibility(tableVisible);
+        if (tableVisible) {
+          setTimeout(() => {
+            const tableElem = document.getElementById('selectionTableContainer');
+            if (tableElem) tableElem.scrollIntoView({ behavior: 'smooth' });
+          }, 50);
+        } else {
+          setTimeout(() => {
+            const formElem = document.getElementById('sectorForm');
+            if (formElem) formElem.scrollIntoView({ behavior: 'smooth' });
+          }, 50);
+        }
+      };
+    });
+
+    // --- Utility functions ---
+    function attachClearSelectionHandler() {
+      const clearBtn = document.getElementById('clearSelectionBtn');
+      if (clearBtn && !clearBtn._handlerAttached) {
+        clearBtn.onclick = function(e) {
+          e.stopPropagation();
+          selectedStates = [];
+          updateSelectedStates();
+          closeDropdown();
+          attachClearSelectionHandler();
+        };
+        clearBtn._handlerAttached = true;
+      }
+    }
+    attachClearSelectionHandler();
+    document.addEventListener('DOMContentLoaded', attachClearSelectionHandler);
+    const observer = new MutationObserver(attachClearSelectionHandler);
+    observer.observe(document.body, { childList: true, subtree: true });
+
+    function toggleDropdown() {
+      const dropdown = document.getElementById('dropdownOptions');
+      dropdown.classList.toggle('show');
+    }
+    window.toggleDropdown = toggleDropdown;
+
+    function closeDropdown() {
+      const dropdown = document.getElementById('dropdownOptions');
+      if (dropdown) dropdown.classList.remove('show');
+    }
+    window.closeDropdown = closeDropdown;
