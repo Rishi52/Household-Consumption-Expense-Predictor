@@ -1,4 +1,4 @@
-    // Handles state/sector/year selection, dropdowns, table rendering, and D3 map rendering
+// Handles state/sector/year selection, dropdowns, table rendering, and D3 map rendering
 
     // --- State variables ---
     let allStates = [];
@@ -6,10 +6,10 @@
 
     // --- Year config (automated) ---
     const YEAR_CONFIG = {
-      '2223': { label: '2022-23', file: '/static/data/year_2022_23.csv' },
-      '2324': { label: '2023-24', file: '/static/data/year_2023_24.csv' },
+      '2223': { label: '2022-23', file: '/frontend/data/year_2022_23.csv' },
+      '2324': { label: '2023-24', file: '/frontend/data/year_2023_24.csv' },
       // To add a new year, add a line like:
-      // '2526': { label: '2025-26', file: '/static/data/year_2025_26.csv' }
+      // '2526': { label: '2025-26', file: '/frontend/data/year_2025_26.csv' }
     };
 
     // --- Year/Sector selection helpers ---
@@ -71,7 +71,7 @@
         document.getElementById('dropdownPlaceholder').textContent = 'Choose states...';
       } else {
         document.getElementById('dropdownPlaceholder').textContent = 'Select year(s)';
-      } 
+      }
       // Show/hide India MPCE button
       showHideIndiaButton();
     }
@@ -423,7 +423,7 @@
         // For each year, load its CSV and render all maps for that year
         const useIndia = selectedStates.includes('India');
         yearFiles.forEach(({ year, file }) => {
-          const geojsonFile = useIndia ? '/static/data/india-composite.geojson' : '/static/data/india.json';
+          const geojsonFile = useIndia ? '/frontend/data/india-composite.geojson' : '/frontend/data/india.json';
           d3.json(geojsonFile).then(geojson => {
             d3.csv(file).then(csvData => {
               let dataByState = {};
@@ -584,42 +584,6 @@
       }, 50);
       return false;
     };
-
-    // --- Table toggle logic ---
-    function setTableVisibility(show) {
-      const tableContainer = document.getElementById('selectionTableContainer');
-      const toggleBtn = document.getElementById('toggleTableBtn');
-      if (!tableContainer || !toggleBtn) return;
-      if (show) {
-        tableContainer.style.display = '';
-        toggleBtn.textContent = 'Hide Table';
-        toggleBtn.classList.add('floating');
-      } else {
-        tableContainer.style.display = 'none';
-        toggleBtn.textContent = 'Show Table';
-        toggleBtn.classList.remove('floating');
-      }
-    }
-    document.addEventListener('DOMContentLoaded', function() {
-      const toggleBtn = document.getElementById('toggleTableBtn');
-      if (!toggleBtn) return;
-      let tableVisible = false;
-      toggleBtn.onclick = function() {
-        tableVisible = !tableVisible;
-        setTableVisibility(tableVisible);
-        if (tableVisible) {
-          setTimeout(() => {
-            const tableElem = document.getElementById('selectionTableContainer');
-            if (tableElem) tableElem.scrollIntoView({ behavior: 'smooth' });
-          }, 50);
-        } else {
-          setTimeout(() => {
-            const formElem = document.getElementById('sectorForm');
-            if (formElem) formElem.scrollIntoView({ behavior: 'smooth' });
-          }, 50);
-        }
-      };
-    });
 
     // --- Utility functions ---
     function attachClearSelectionHandler() {
