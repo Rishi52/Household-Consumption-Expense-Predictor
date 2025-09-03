@@ -43,7 +43,7 @@ uvicorn app:app --reload
 
 ---
 
-![index-page](./assets/index-page.png)
+<img width="1918" height="871" alt="index-page" src="https://github.com/user-attachments/assets/07dab391-1cd6-47d8-a800-ef1fdae0b217" />
 
 ---
 
@@ -219,7 +219,7 @@ The frontend is entirely static and should be opened using a live server like VS
 
 6. UI displays the result to user.
 
-![HCE Survey Workflow](./assets/workflow-diagram.png)
+<img width="708" height="465" alt="workflow-diagram" src="https://github.com/user-attachments/assets/a6f2aecf-2cf0-4a83-b296-45d506d4cba6" />
 
 ### Forecast Maps:
 
